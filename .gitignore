@@ -1,0 +1,20 @@
+# Ignore Python virtual environment
+venv/
+
+# Ignore Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore environment variable/config files
+.env
+
+# Ignore user-specific files (VS Code, Mac, etc.)
+.vscode/
+.DS_Store
+
+# Ignore history and log files
+agent_history.json
+
+# Ignore OS-generated files
+Thumbs.db
