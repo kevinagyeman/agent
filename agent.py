@@ -1,51 +1,10 @@
 from typing import List, Dict, Tuple, Optional, Any
-import asyncio
-import os
 import anthropic
 from pathlib import Path
+import os
 import json
-from dotenv import load_dotenv
-
-load_dotenv()
-
-
-SYSTEM_PROMPT = """You are a helpful coding agent that assists with programming tasks and file operations.
-
-When responding to requests:
-1. Analyze what the user needs
-2. Use the minimum number of tools necessary to accomplish the task
-3. After using tools, provide a concise summary of what was done
-
-IMPORTANT: Once you've completed the requested task, STOP and provide your final response. Do not continue creating additional files or performing extra actions unless specifically asked.
-
-Examples of good behavior:
-- User: "Create a file that adds numbers" → Create ONE file, then summarize
-- User: "Create files for add and subtract" → Create ONLY those two files, then summarize
-- User: "Create math operation files" → Ask for clarification on which operations, or create a reasonable set and stop
-
-After receiving tool results:
-- If the task is complete, provide a final summary
-- Only continue with more tools if the original request is not yet fulfilled
-- Do not interpret successful tool execution as a request to do more
-
-Be concise and efficient. Complete the requested task and stop."""
-
-
-TOOLS_SCHEMA = [
-    {
-        "name": "read_file",
-        "description": "Read the contents of a file",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "The path to the file to read"}
-            },
-            "required": ["path"]
-        }
-    },
-    # Other tool definitions...
-]
-
+from config import SYSTEM_PROMPT, TOOLS_SCHEMA
+from tools.file_ops import read_file
 
 class CodingAgent:
     def __init__(self, api_key: str, working_directory: str = ".", history_file: str = "agent_history.json"):
@@ -71,16 +30,8 @@ class CodingAgent:
         except Exception as e:
             return None, f"Unexpected error calling Claude API: {str(e)}"
 
-    async def _read_file(self, path: str) -> Dict[str, Any]:
-        try:
-            file_path = (self.working_directory / path).resolve()
-            if not str(file_path).startswith(str(self.working_directory)):
-                return {"error": "Access denied: path outside working directory"}
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            return {"success": True, "content": content, "path": str(file_path)}
-        except Exception as e:
-            return {"error": f"Could not read file: {str(e)}"}
+    async def _read_file(self, path: str) -> dict:
+        return await read_file(self.working_directory, path)
 
     async def _execute_tool_calls(self, tool_uses: List[Any]) -> List[Dict]:
         tool_results = []
@@ -89,14 +40,7 @@ class CodingAgent:
             try:
                 if tool_use.name == "read_file":
                     result = await self._read_file(tool_use.input.get("path", ""))
-                elif tool_use.name == "write_file":
-                    result = await self._write_file(tool_use.input.get("path", ""), 
-                                                   tool_use.input.get("content", ""))
-                elif tool_use.name == "list_files":
-                    result = await self._list_files(tool_use.input.get("path", "."))
-                elif tool_use.name == "search_files":
-                    result = await self._search_files(tool_use.input.get("pattern", ""), 
-                                                     tool_use.input.get("path", "."))
+                # Implement other tool names as needed
                 else:
                     result = {"error": f"Unknown tool: {tool_use.name}"}
             except Exception as e:
@@ -106,7 +50,6 @@ class CodingAgent:
                 print(f"Tool executed successfully")
             elif "error" in result:
                 print(f"Error: {result['error']}")
-
             tool_results.append({
                 "tool_use_id": tool_use.id,
                 "content": json.dumps(result)
@@ -132,7 +75,7 @@ class CodingAgent:
         self.messages.append({"role": role, "content": content})
         self.save_history()
 
-    def build_messages_list(self, user_input: Optional[str] = None, 
+    def build_messages_list(self, user_input: Optional[str] = None,
                             tool_results: Optional[List[Dict]] = None,
                             assistant_content: Optional[Any] = None,
                             max_history: int = 20) -> List[Dict]:
@@ -207,48 +150,3 @@ class CodingAgent:
                 tool_uses.append(block)
                 print(f" Tool call: {block.name}")
         return text_responses, tool_uses
-
-
-async def main():
-    print("Welcome to Baby Claude Code!!")
-    print("Type 'exit' or 'quit' to quit, 'clear' to clear history, 'history' to show recent messages")
-    print("-" * 50)
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        api_key = input("Enter your Anthropic API key: ").strip()
-    agent = CodingAgent(api_key)
-    while True:
-        try:
-            user_input = input("\n You: ").strip()
-            if user_input.lower() in ['exit', 'quit']:
-                print("Goodbye!")
-                break
-            elif user_input.lower() == 'clear':
-                agent.messages = []
-                agent.save_history()
-                print("History cleared!")
-                continue
-            elif user_input.lower() == 'history':
-                print("\nRecent conversation history:")
-                for msg in agent.messages[-10:]:
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    if len(content) > 100:
-                        content = content[:100] + "..."
-                    timestamp = msg.get("timestamp", "")
-                    print(f"  [{role}] {content}")
-                continue
-            elif not user_input:
-                continue
-            print("\n Agent processing...")
-            response = await agent.process_message(user_input)
-            print(f"\n Agent: {response}")
-        except KeyboardInterrupt:
-            print("\n\nGoodbye!")
-            break
-        except Exception as e:
-            print(f"\n Error: {e}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
